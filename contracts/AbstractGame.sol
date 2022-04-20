@@ -15,12 +15,43 @@ abstract contract AbstractGame is Ownable {
     uint constant INVALID_BET = 0;
 
     bytes32[] commits;
-    Bet[] bets;
+    Bet[] public bets;
     bool[] revealedBet;
-    bool houseCommited = false;
-    uint houseCommitBlockNumber = 0;
-    uint gameTimeoutInBlocks = 100;
-    uint gameId = 0;
+    bool public houseCommited = false;
+    bool public commitPhaseEnded = false;
+    bool public houseRevealed = false;
+    uint public houseCommitBlockNumber = 0;
+    uint public gameTimeoutInBlocks = 100;
+    uint public gameId = 0;
+
+    struct GameStatus {
+        bool bettingStarted;
+        uint players;
+        uint gameId;
+
+        bool houseCommited;
+        bool commitPhaseEnded;
+        bool houseRevealed;
+    }
+
+    function deposit() external payable {}
+
+    function gameStatus() public view returns (GameStatus memory) {
+        uint players_ = 0;
+        if (houseCommited) {
+            players_ = bets.length - 1;
+        }
+        
+        return GameStatus({
+            bettingStarted: houseCommited && !commitPhaseEnded,
+            players: players_,
+            gameId: gameId,
+
+            houseCommited: houseCommited,
+            commitPhaseEnded: commitPhaseEnded,
+            houseRevealed: houseRevealed
+        });
+    }
 
     function setGameTimeoutInBlocks(uint gameTimeoutInBlocks_) public onlyOwner {
         require(houseCommited == false, "Cannot change game timeout after the game has started.");
@@ -32,6 +63,7 @@ abstract contract AbstractGame is Ownable {
 
     function commitBet(bytes32 betHash, uint outcome_) public payable {
         require(houseCommited || msg.sender == owner(), "The house must commit first.");
+        require(!commitPhaseEnded, "The commit phase has ended.");
         require(msg.sender == owner() || msg.value > 0, "The bet must be greater than 0.");
     
         validateBet(uint(msg.value), outcome_);
@@ -59,8 +91,19 @@ abstract contract AbstractGame is Ownable {
 
     function validateBet(uint, uint) internal virtual {}
 
+    event CommitPhaseEnded(uint gameId);
+
+    function endCommitPhase() public onlyOwner {
+        require(!commitPhaseEnded, "The commit phase has already ended.");
+
+        commitPhaseEnded = true;
+        emit CommitPhaseEnded(gameId);
+    }
+
     function revealBet(uint betId, uint randomness) public {
         require(houseCommited, "The house must commit.");
+        //require(commitPhaseEnded, "The commit phase has not ended yet.");
+        require(!houseRevealed, "The house already revealed its bet.");
         require(betId < bets.length, "Invalid bet id.");
 
         bets[betId].randomness = randomness;
@@ -69,11 +112,15 @@ abstract contract AbstractGame is Ownable {
         revealedBet[betId] = true;
 
         if (msg.sender == owner()) {
+            houseRevealed = true;
             play();
         }
     }
 
     event GamePlayed(uint gameId, uint randomness);
+
+    event FailedPayout(address indexed player, uint gameId, uint amount);
+    event Payout(address indexed player, uint gameId, uint amount);
 
     function play() private {
         uint commitsSum = 0;
@@ -99,11 +146,15 @@ abstract contract AbstractGame is Ownable {
     function abort() public {
         require(block.number > houseCommitBlockNumber + gameTimeoutInBlocks, "Game has not expired yet.");
         require(houseCommited, "No game to abort.");
+        require(!houseRevealed, "The house already revealed its bet.");
 
         // The game is aborted, refund everyone
         for (uint i = 0; i < bets.length; i++) {
             if (bets[i].player != owner()) {
-                bets[i].player.transfer(bets[i].amount);
+                (bool success, ) = bets[i].player.call{value: bets[i].amount}("");
+                if (!success) {
+                    emit FailedPayout(bets[i].player, gameId, bets[i].amount);
+                }
             }
         }
 
@@ -115,6 +166,8 @@ abstract contract AbstractGame is Ownable {
         delete bets;
         delete commits;
         houseCommited = false;
+        commitPhaseEnded = false;
+        houseRevealed = false;
         houseCommitBlockNumber = 0;
     }
 

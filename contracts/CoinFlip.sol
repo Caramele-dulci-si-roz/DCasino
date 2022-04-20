@@ -35,7 +35,12 @@ contract CoinFlip is AbstractGame {
             if (bets_[i].amount == INVALID_BET) continue;
 
             if (bets_[i].outcome == outcome) {
-                bets_[i].player.transfer(bets_[i].amount * 2);
+                (bool success, ) = bets_[i].player.call{value: bets_[i].amount * 2}("");
+                if (!success) {
+                    emit FailedPayout(bets_[i].player, gameId, bets_[i].amount * 2);
+                } else {
+                    emit Payout(bets_[i].player, gameId, bets_[i].amount * 2);
+                }
             }
         }
     }
