@@ -125,7 +125,8 @@ abstract contract AbstractGame is Ownable {
     function play() private {
         uint commitsSum = 0;
         for (uint i = 0; i < commits.length; i++) {
-            commitsSum += uint(commits[i]);
+            commitsSum += uint(commits[i]) % 2e7;
+            commitsSum %= 2e7;
 
             // keep only the bets that have been revealed
             if (!revealedBet[i]) {
